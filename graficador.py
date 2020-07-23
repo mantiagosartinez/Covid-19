@@ -16,7 +16,7 @@ from datetime import datetime
 
 confirmed = "time_series_covid19_confirmed_global.csv"
 
-deaths = "time_series_covid19_deaths_global.csv"
+deaths = "ttime_series_covid19_deaths_global.csv"
 
 recovered = "time_series_covid19_recovered_global.csv"
 
