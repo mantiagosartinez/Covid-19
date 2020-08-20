@@ -1,28 +1,25 @@
-# -*- coding: utf-8 -*-
 """
 Created on Thu Jul 23 18:03:51 2020
 
-@author: santi
+@author: mantiagosartinez
 """
-
-from PyQt5.QtCore import QDateTime, Qt, QTimer, QRect
-from PyQt5.QtWidgets import (QApplication, QCheckBox, QComboBox, QDateTimeEdit,
-        QDial, QDialog, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-        QProgressBar, QPushButton, QRadioButton, QScrollBar, QSizePolicy,
-        QSlider, QSpinBox, QStyleFactory, QTableWidget, QTabWidget, QTextEdit,
-        QVBoxLayout, QWidget, QListWidget, QColorDialog)
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog,
+                             QGridLayout, QGroupBox, QHBoxLayout, QLabel,
+                             QPushButton, QRadioButton, QVBoxLayout,
+                             QColorDialog)
 
 from io import StringIO 
 import pandas as pd
 from matplotlib.backends.backend_qt5agg import FigureCanvas
 from matplotlib.figure import Figure
-
+import numpy as np
 import urllib.request
-import sys
-
+import sys, traceback
 
 class Covid(QDialog):
     def __init__(self, parent=None):
+        
         super().__init__(parent)
         self.originalPalette = QApplication.palette()
 
@@ -30,8 +27,7 @@ class Covid(QDialog):
         
         self.dataBase()
         self.createTopLayout()
-        self.anotherGroup()
-        
+        self.createBottomRight()
         self.createTopLeftGroupBox()
         self.createTopRightGroupBox()
         self.createBottomLeftGroupBox()
@@ -43,12 +39,11 @@ class Covid(QDialog):
         mainLayout.addWidget(self.topRightGroupBox, 1, 1, 1,2)
         mainLayout.addWidget(self.bottomLeftGroupBox, 2, 0)
         mainLayout.addWidget(self.bottomRightGroupBox, 2, 1)
-        mainLayout.addWidget(self.anotherGroup, 2, 2)
-        
+        mainLayout.addWidget(self.bottomRight, 2, 2)
         
         self.setLayout(mainLayout)
         self.setWindowTitle("Covid-19 Estadisticas")
-        self.anotherGroup.setEnabled(False)
+        self.bottomRight.setEnabled(False)
         
         #Tengo un tema con la siguiente linea, se supone que lo que hace es cambiar el estilo de la ventana, por ejemplo podes hacer que parezca que es estilo win 98 o vista, etc. Mi favorita es fusion, pero por alguna razon cuando lo hago el QcomboBox falla, en vez de abrirse una lista tranqui de unos 8 elementos, se abre una lista que ocupa toda la pantalla, y solo cambiando eso. Como es algo tan especifico no encontre nada ni en foros ni en documentacion.
         #QApplication.setStyle(QStyleFactory.create("Fusion"))
@@ -84,9 +79,9 @@ class Covid(QDialog):
             data = f.read().decode('utf-8')
             data = StringIO(data)
         df = pd.read_csv(data)
-        df = df.drop(columns=['Province/State','Lat', 'Long'])
+        df = df.drop(columns = ['Province/State','Lat', 'Long'])
         self.covid_data_recovered = df.groupby('Country/Region').agg('sum')
-        
+
     def createTopLayout(self):
         """Crea el layout de arriba de todo"""
         
@@ -116,27 +111,47 @@ class Covid(QDialog):
         self.t_month = QRadioButton("Último mes")
         self.t_week = QRadioButton("Última semana")
         self.t_comienzo.setChecked(True)
+        self.avg = QCheckBox("Media movil 7 dias")
+        
+        self.t_comienzo.toggled.connect(self.turnOn)
+        self.t_month.toggled.connect(self.turnOn)
+        self.t_week.toggled.connect(self.turnOn)
         
         self.t_comienzo.toggled.connect(self.turnOff)
-        self.t_month.toggled.connect(self.turnOn)
-        self.t_month.toggled.connect(self.turnOn)
-        self.t_comienzo.toggled.connect(self.graph)
+        self.t_month.toggled.connect(self.turnOff)
+        self.t_week.toggled.connect(self.turnOff)
         
+        
+        self.t_comienzo.toggled.connect(self.graph)
+        self.avg.toggled.connect(self.graph)
         self.t_month.toggled.connect(self.graph)
         self.t_week.toggled.connect(self.graph)
+        
         
         layout.addWidget(self.t_comienzo)
         layout.addWidget(self.t_month)
         layout.addWidget(self.t_week)
+        layout.addWidget(self.avg)
         #layout.addStretch(1)
         self.topLeftGroupBox.setLayout(layout)     
     
     def turnOff(self):
-        self.interpol.setChecked(True)
-        self.anotherGroup.setEnabled(False)
+        
+        if self.t_comienzo.isChecked():
+            self.interpol.setChecked(True)
+            self.bottomRight.setEnabled(False)
+            
+        if self.t_week.isChecked():
+            self.avg.setEnabled(False)
+            self.avg.setChecked(False)
     
     def turnOn(self):
-        self.anotherGroup.setEnabled(True)
+        
+        if self.t_comienzo.isChecked()==False:
+            self.bottomRight.setEnabled(True)
+            
+        if self.t_week.isChecked()==False:
+            self.avg.setEnabled(True)
 
     def createTopRightGroupBox(self):
         self.topRightGroupBox = QGroupBox()
@@ -223,8 +238,8 @@ class Covid(QDialog):
         self.bottomRightGroupBox.setLayout(layout)
         
         
-    def anotherGroup(self):
-        self.anotherGroup = QGroupBox("Group 4")
+    def createBottomRight(self):
+        self.bottomRight = QGroupBox("Group 4")
         
         layout = QVBoxLayout()
         self.interpol = QRadioButton("Interpolación")
@@ -234,16 +249,19 @@ class Covid(QDialog):
         
         layout.addWidget(self.interpol)
         layout.addWidget(self.bar)
-        self.anotherGroup.setLayout(layout)
+        self.bottomRight.setLayout(layout)
         
     def graph(self):
-        self.max = 0
+        """La funcion que se encarga del grafico"""
+        self.max = 0 #Para que se resetee el maximo, ya que habia un problema 
+        #si pasabas de un pais con muchas muertes a uno con pocas
         labeled = []
         self.sub.clear()
         if self.country.currentIndex()>0:
             country = self.covid_data_confirmed.index.values[self.country.currentIndex()-1]
+            #El -1 esta para no contar el "seleccionar pais"
         else:
-            
+            #No hace nada
             return
         checked = [self.cases, self.recovered, self.deaths ]
         label = ["Casos confirmados", "Recuperados", "Muertos"]
@@ -251,23 +269,22 @@ class Covid(QDialog):
         
         color = []
         
-        ###Se te ocurre otra forma de organizar las siguientes lineas? La otra que se me ocurrio es hacer dos listas de 3 elementos y un for que los recorra, y poner el try catch adentro del for, pero tiene la desventaja de que deberia asignar en una lista los elementos de cada color, por lo tanto ya en la asignacion me tira error si no existen
-        
-        try:
-            color.append(self.color_cases.name())
-        except:
-            color.append("b")
-        try:
-            color.append(self.color_recovered.name())
-        except:
-            color.append("violet")
-        try:
-            color.append(self.color_deaths.name())
-        except:
-            color.append("g")
-            
-        
+        ###¿Se te ocurre otra forma de organizar las siguientes lineas? La otra que se me ocurrio es hacer dos listas de 3 elementos y un for que los recorra, y poner el try catch adentro del for, pero tiene la desventaja de que deberia asignar en una lista los elementos de cada color, por lo tanto ya en la asignacion me tira error si no existen
+        #Todo lo referido al color
+
+        for colores, default in (                                                                     
+                (self.color_cases, "b"), (self.color_recovered, "violet"), (self.color_deaths, 'g')):                                                                                                   
+            try:                                                                                    
+                color.append(colores.name())                                                          
+            except:                    
+                                                    
+                color.append(default)
         #Las siguientes lineas son los cambios si es lineal o log
+        if self.avg.isChecked():
+            avg = 7
+        else:
+            avg = 1
+        
         if self.lin.isChecked():
             logY = False
             mini = 0
@@ -286,34 +303,34 @@ class Covid(QDialog):
         if self.t_comienzo.isChecked():
             start = -len(self.covid_data_confirmed.columns)
         elif self.t_month.isChecked():
-            start=-30
+            start = -30
         elif self.t_week.isChecked():
-            start=-8
-        
-        #El grafico general, decidi hacerlos en dos, si es total o si es diario porque tenian varios cambios (Ademas del titulo hay una linea extra en donde se restan) De todas formas se que podria meter un if afuera para cambiar el titulo y otro if adentro para ver si es necesaria la linea en que se resta para obtener los casos diarios
-        if self.total.isChecked():
-            for checked_i, data_i, color_i, label_i in zip(checked, data, color, label):
-                if checked_i.isChecked():
-                    country_data = data_i[data_i.index.values == country]
+            start = -8
+            
+        for checked_i, data_i, color_i, label_i in zip(checked, data, color, label):                
+            if checked_i.isChecked():                                                               
+                country_data = data_i[data_i.index.values == country]                               
+                if self.total.isChecked():                                                          
                     by_date = country_data.filter(like='/20').T
-                    by_date[start:-1].plot(ax=self.sub, color=color_i, logy=logY, label=label_i, title="Covid 19 acumulativo en " + country, kind=kind, linewidth=2)
-                    if by_date[country].max() >= self.max:
-                        self.max = by_date[country].max()
-                    self.sub.set_ylim(mini, self.max)
-                    labeled.append(label_i)
-                self.sub.legend(labeled)
-        else:
-            for checked_i, data_i, color_i, label_i in zip(checked, data, color, label):
-                if checked_i.isChecked():
-                    country_data = data_i[data_i.index.values == country]
-                    by_date = country_data.filter(like='/20').diff(axis=1).T
-                    by_date[start:-1].plot(ax=self.sub, color=color_i, logy=logY, label=label_i, title="Covid 19 diario en " + country, kind=kind, linewidth=2)
-                    if by_date[country].max() >= self.max:
-                        self.max = by_date[country].max()
-                    self.sub.set_ylim(mini, self.max)
-                    labeled.append(label_i)
-                self.sub.legend(labeled)
-                    
+                    by_date = by_date.rolling(window=avg).mean()  
+                    by_date[start:-1].plot(ax=self.sub, color=color_i, logy=logY, label=label_i,    
+                                           title="Covid 19 acumulativo en " + country, kind=kind, linewidth=2) 
+                                                                                         
+                else:                                                                               
+                    by_date = country_data.filter(like='/20').T
+                    #by_date.append(pd.Series(np.zeros(avg)),ignore_index=True)
+                    by_date = by_date.rolling(window=avg).mean()  
+                    by_date = by_date.diff(axis=0)
+                    by_date[start:-1].plot(ax=self.sub, color=color_i, logy=logY, label=label_i,    
+                                           title="Covid 19 diario en " + country, kind=kind, linewidth=2)
+                                                                                                             
+                if by_date[country].max() >= self.max:                                              
+                    self.max = by_date[country].max()                                               
+                self.sub.set_ylim(mini, self.max)                                                   
+                labeled.append(label_i)
+            self.sub.legend(labeled)
+            self.sub.grid()
+            
         self.canvas.draw()
         
         
@@ -323,11 +340,11 @@ class Covid(QDialog):
         self.deaths.setChecked(True)
         self.recovered.setChecked(True)
         
-        
 
 if __name__ == '__main__':
+    
     
     app = QApplication(sys.argv)
     gallery = Covid()
     gallery.show()
-    sys.exit(app.exec_())
+    app.exec_()
